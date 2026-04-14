@@ -1,0 +1,73 @@
+name: Deploy next-aws to EC2
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: next-aws-production
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Build
+        run: npm run build
+
+  deploy:
+    needs: ci
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install SSH client tools
+        run: sudo apt-get update && sudo apt-get install -y rsync openssh-client
+
+      - name: Prepare SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2_key
+          chmod 600 ~/.ssh/ec2_key
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Ensure app directory exists
+        run: |
+          ssh -i ~/.ssh/ec2_key "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+          "mkdir -p /var/www/next-aws"
+
+      - name: Sync files to EC2
+        run: |
+          rsync -az --delete \
+            --exclude ".git" \
+            --exclude ".github" \
+            --exclude "node_modules" \
+            --exclude ".next" \
+            --exclude ".env" \
+            --exclude ".env.*" \
+            -e "ssh -i ~/.ssh/ec2_key" \
+            ./ "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/var/www/next-aws"
+
+      - name: Run remote deploy script
+        run: |
+          ssh -i ~/.ssh/ec2_key "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+          "chmod +x /var/www/next-aws/scripts/deploy.sh && /var/www/next-aws/scripts/deploy.sh"
