@@ -92,6 +92,12 @@ jobs:
             ./ "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/var/www/next-aws"
 
       - name: Run remote deploy script
+        timeout-minutes: 20
         run: |
-          ssh -i ~/.ssh/ec2_key "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-          "chmod +x /var/www/next-aws/scripts/deploy.sh && /var/www/next-aws/scripts/deploy.sh"
+          ssh \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=10 \
+            -o TCPKeepAlive=yes \
+            -i ~/.ssh/ec2_key \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            "chmod +x /var/www/next-aws/scripts/deploy.sh && bash /var/www/next-aws/scripts/deploy.sh"
