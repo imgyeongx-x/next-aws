@@ -1,4 +1,4 @@
-name: Deploy next-aws to EC2 via SSH
+name: Deploy next-aws to EC2
 
 on:
   push:
@@ -12,7 +12,7 @@ concurrency:
 jobs:
   ci:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -33,6 +33,36 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Prepare standalone release bundle
+        run: |
+          set -euo pipefail
+
+          test -d .next/standalone
+          test -d .next/static
+
+          rm -rf deploy_bundle
+          mkdir -p deploy_bundle/.next
+
+          cp -R .next/standalone/. deploy_bundle/
+          cp -R .next/static deploy_bundle/.next/static
+
+          if [ -d public ]; then
+            cp -R public deploy_bundle/public
+          fi
+
+          cp ecosystem.config.cjs deploy_bundle/ecosystem.config.cjs
+
+          printf '%s\n' "${GITHUB_SHA}" > deploy_bundle/REVISION
+
+          tar -czf release.tar.gz -C deploy_bundle .
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: next-aws-release
+          path: release.tar.gz
+          retention-days: 1
+
   deploy:
     needs: ci
     runs-on: ubuntu-latest
@@ -42,8 +72,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Download release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: next-aws-release
+
       - name: Install SSH tools
-        run: sudo apt-get update && sudo apt-get install -y rsync openssh-client
+        run: sudo apt-get update && sudo apt-get install -y openssh-client
 
       - name: Prepare SSH key
         env:
@@ -52,6 +87,7 @@ jobs:
           EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
           set -euo pipefail
+
           test -n "$EC2_HOST"
           test -n "$EC2_USER"
           test -n "$EC2_SSH_KEY"
@@ -70,33 +106,49 @@ jobs:
             "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
             "echo '[ok] ssh connected'; whoami"
 
-      - name: Sync files to EC2
-        run: |
-          rsync -az --delete \
-            --exclude ".git" \
-            --exclude ".github" \
-            --exclude "node_modules" \
-            --exclude ".next" \
-            --exclude ".env" \
-            --exclude ".env.*" \
-            -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/ec2_key" \
-            ./ "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/var/www/next-aws"
-
-      - name: Start remote deploy in background
+      - name: Prepare directories on EC2
         run: |
           ssh \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -i ~/.ssh/ec2_key \
             "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-            "chmod +x /var/www/next-aws/scripts/deploy.sh && nohup bash /var/www/next-aws/scripts/deploy.sh > /var/www/next-aws/deploy.log 2>&1 < /dev/null &"
+            "mkdir -p /var/www/next-aws/releases /var/www/next-aws/shared /var/www/next-aws/scripts"
 
-      - name: Show initial deploy log
+      - name: Upload deploy script
         run: |
-          sleep 5
+          scp \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/ec2_key \
+            scripts/deploy.sh \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/var/www/next-aws/scripts/deploy.sh"
+
+      - name: Upload release archive
+        run: |
+          scp \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/ec2_key \
+            release.tar.gz \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/next-aws-${GITHUB_SHA}.tar.gz"
+
+      - name: Run remote deploy
+        run: |
+          ssh \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=3 \
+            -i ~/.ssh/ec2_key \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            "chmod +x /var/www/next-aws/scripts/deploy.sh && RELEASE_ID=${GITHUB_SHA} /var/www/next-aws/scripts/deploy.sh"
+
+      - name: Show deploy log
+        run: |
           ssh \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -i ~/.ssh/ec2_key \
             "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-            "tail -n 50 /var/www/next-aws/deploy.log || true"
+            "tail -n 100 /var/www/next-aws/deploy.log"
