@@ -53,8 +53,8 @@ if [ -f "$SHARED_DIR/.env" ]; then
 fi
 
 echo "[5/6] restart pm2"
-command -v pm2 || { echo "[error] pm2 not found"; exit 127; }
-pm2 startOrRestart "$CURRENT_LINK/ecosystem.config.cjs" --update-env
+pm2 delete next-aws || true
+pm2 start "$CURRENT_LINK/ecosystem.config.cjs"
 pm2 save
 
 echo "[6/6] cleanup old releases"

@@ -2,7 +2,7 @@ module.exports = {
   apps: [
     {
       name: 'next-aws',
-      script: './server.js',
+      script: '/var/www/next-aws/current/server.js',
       cwd: '/var/www/next-aws/current',
       instances: 1,
       exec_mode: 'fork',
