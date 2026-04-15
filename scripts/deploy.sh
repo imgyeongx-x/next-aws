@@ -8,6 +8,14 @@ SCRIPTS_DIR="$APP_ROOT/scripts"
 CURRENT_LINK="$APP_ROOT/current"
 LOG_FILE="$APP_ROOT/deploy.log"
 
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+
+echo "PATH=$PATH"
+command -v node || true
+command -v npm || true
+command -v pm2 || true
+
 : "${RELEASE_ID:?RELEASE_ID is required}"
 
 ARCHIVE_PATH="/tmp/next-aws-${RELEASE_ID}.tar.gz"
@@ -32,8 +40,6 @@ tar -xzf "$ARCHIVE_PATH" -C "$NEW_RELEASE_DIR"
 echo "[2/6] link shared env"
 if [ -f "$SHARED_DIR/.env" ]; then
   ln -sfn "$SHARED_DIR/.env" "$NEW_RELEASE_DIR/.env"
-else
-  echo "[warn] $SHARED_DIR/.env not found"
 fi
 
 echo "[3/6] switch current symlink"
@@ -47,6 +53,7 @@ if [ -f "$SHARED_DIR/.env" ]; then
 fi
 
 echo "[5/6] restart pm2"
+command -v pm2 || { echo "[error] pm2 not found"; exit 127; }
 pm2 startOrRestart "$CURRENT_LINK/ecosystem.config.cjs" --update-env
 pm2 save
 
