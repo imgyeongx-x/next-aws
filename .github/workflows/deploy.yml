@@ -1,4 +1,4 @@
-name: Deploy next-aws to EC2
+name: Deploy next-aws to EC2 via SSH
 
 on:
   push:
@@ -12,6 +12,8 @@ concurrency:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -34,6 +36,7 @@ jobs:
   deploy:
     needs: ci
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -57,16 +60,15 @@ jobs:
           printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/ec2_key
           chmod 600 ~/.ssh/ec2_key
 
-      - name: Ensure app directory exists
+      - name: Test SSH connection
         run: |
           ssh \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
-            -o ServerAliveInterval=30 \
-            -o ServerAliveCountMax=10 \
+            -o ConnectTimeout=15 \
             -i ~/.ssh/ec2_key \
             "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-            "mkdir -p /var/www/next-aws"
+            "echo '[ok] ssh connected'; whoami"
 
       - name: Sync files to EC2
         run: |
@@ -77,17 +79,24 @@ jobs:
             --exclude ".next" \
             --exclude ".env" \
             --exclude ".env.*" \
-            -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -i ~/.ssh/ec2_key" \
+            -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/ec2_key" \
             ./ "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/var/www/next-aws"
 
-      - name: Run remote deploy script
-        timeout-minutes: 20
+      - name: Start remote deploy in background
         run: |
           ssh \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
-            -o ServerAliveInterval=30 \
-            -o ServerAliveCountMax=10 \
             -i ~/.ssh/ec2_key \
             "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-            "chmod +x /var/www/next-aws/scripts/deploy.sh && bash /var/www/next-aws/scripts/deploy.sh"
+            "chmod +x /var/www/next-aws/scripts/deploy.sh && nohup bash /var/www/next-aws/scripts/deploy.sh > /var/www/next-aws/deploy.log 2>&1 < /dev/null &"
+
+      - name: Show initial deploy log
+        run: |
+          sleep 5
+          ssh \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/ec2_key \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            "tail -n 50 /var/www/next-aws/deploy.log || true"
